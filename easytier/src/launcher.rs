@@ -34,6 +34,38 @@ pub type MyNodeInfo = crate::proto::api::manage::MyNodeInfo;
 type ArcMutApiService = Arc<RwLock<Option<Arc<dyn InstanceRpcService>>>>;
 type TunFd = Option<i32>;
 
+pub(crate) fn build_socks5_portal_url(
+    port: i32,
+    username: Option<&str>,
+    password: Option<&str>,
+) -> Result<url::Url, anyhow::Error> {
+    let mut url = url::Url::parse(&format!("socks5://0.0.0.0:{port}"))
+        .with_context(|| format!("failed to parse socks5 port: {port}"))?;
+    let username = username.unwrap_or_default();
+    let password = password.unwrap_or_default();
+
+    match (username.is_empty(), password.is_empty()) {
+        (true, true) => {}
+        (false, false) => {
+            url.set_username(username)
+                .map_err(|_| anyhow::anyhow!("failed to set socks5 username"))?;
+            url.set_password(Some(password))
+                .map_err(|_| anyhow::anyhow!("failed to set socks5 password"))?;
+        }
+        _ => {
+            anyhow::bail!("socks5 username and password must be set together or both left empty")
+        }
+    }
+
+    Ok(url)
+}
+
+fn decode_url_part(value: &str) -> String {
+    percent_encoding::percent_decode_str(value)
+        .decode_utf8_lossy()
+        .into_owned()
+}
+
 #[derive(serde::Serialize, Clone)]
 pub struct Event {
     time: DateTime<Local>,
@@ -666,9 +698,11 @@ impl NetworkConfig {
         if self.enable_socks5.unwrap_or_default()
             && let Some(socks5_port) = self.socks5_port
         {
-            cfg.set_socks5_portal(Some(
-                format!("socks5://0.0.0.0:{}", socks5_port).parse().unwrap(),
-            ));
+            cfg.set_socks5_portal(Some(build_socks5_portal_url(
+                socks5_port,
+                self.socks5_username.as_deref(),
+                self.socks5_password.as_deref(),
+            )?));
         }
 
         if !self.mapped_listeners.is_empty() {
@@ -964,6 +998,15 @@ impl NetworkConfig {
         if let Some(socks5_portal) = config.get_socks5_portal() {
             result.enable_socks5 = Some(true);
             result.socks5_port = socks5_portal.port().map(|p| p as i32);
+            let username = decode_url_part(socks5_portal.username());
+            let password = socks5_portal
+                .password()
+                .map(decode_url_part)
+                .unwrap_or_default();
+            if !username.is_empty() || !password.is_empty() {
+                result.socks5_username = Some(username);
+                result.socks5_password = Some(password);
+            }
         }
 
         let mapped_listeners = config.get_mapped_listeners();
@@ -1066,6 +1109,50 @@ mod tests {
             generated_config_str,
             serde_json::to_string(&network_config).unwrap()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_network_config_conversion_socks5_auth() -> Result<(), anyhow::Error> {
+        let config = gen_default_config();
+        config.set_socks5_portal(Some("socks5://alice:p%40ss@0.0.0.0:10808".parse().unwrap()));
+
+        let network_config = super::NetworkConfig::new_from_config(&config)?;
+        assert_eq!(network_config.enable_socks5, Some(true));
+        assert_eq!(network_config.socks5_port, Some(10808));
+        assert_eq!(network_config.socks5_username.as_deref(), Some("alice"));
+        assert_eq!(network_config.socks5_password.as_deref(), Some("p@ss"));
+
+        let generated_config = network_config.gen_config()?;
+        let socks5_portal = generated_config.get_socks5_portal().unwrap();
+        assert_eq!(socks5_portal.username(), "alice");
+        assert_eq!(
+            percent_encoding::percent_decode_str(socks5_portal.password().unwrap())
+                .decode_utf8_lossy(),
+            "p@ss"
+        );
+        assert_eq!(socks5_portal.port(), Some(10808));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_network_config_rejects_partial_socks5_auth() -> Result<(), anyhow::Error> {
+        let config = gen_default_config();
+        let mut network_config = super::NetworkConfig::new_from_config(&config)?;
+        network_config.enable_socks5 = Some(true);
+        network_config.socks5_port = Some(10808);
+
+        network_config.socks5_username = Some("alice".to_string());
+        network_config.socks5_password = None;
+        let err = network_config.gen_config().unwrap_err();
+        assert!(format!("{err:#}").contains("socks5 username and password must be set together"));
+
+        network_config.socks5_username = None;
+        network_config.socks5_password = Some("p@ss".to_string());
+        let err = network_config.gen_config().unwrap_err();
+        assert!(format!("{err:#}").contains("socks5 username and password must be set together"));
+
         Ok(())
     }
 

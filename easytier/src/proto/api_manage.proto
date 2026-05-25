@@ -68,6 +68,8 @@ message NetworkConfig {
   optional bool disable_encryption = 36;
   optional bool enable_socks5 = 37;
   optional int32 socks5_port = 38;
+  optional string socks5_username = 67;
+  optional string socks5_password = 68;
   optional bool disable_udp_hole_punching = 39;
   optional int32 mtu = 40;
   repeated string mapped_listeners = 41;

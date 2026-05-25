@@ -64,6 +64,7 @@ pub trait Authentication: Send + Sync {
 }
 
 /// Basic user/pass auth method provided.
+#[derive(Clone)]
 pub struct SimpleUserPassword {
     pub username: String,
     pub password: String,

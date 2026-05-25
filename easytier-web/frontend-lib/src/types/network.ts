@@ -147,6 +147,8 @@ export interface NetworkConfig {
 
   enable_socks5?: boolean
   socks5_port: number
+  socks5_username: string
+  socks5_password: string
 
   mtu: number | null
   instance_recv_bps_limit: number | null
@@ -221,6 +223,8 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     exit_nodes: [],
     enable_socks5: false,
     socks5_port: 1080,
+    socks5_username: '',
+    socks5_password: '',
     mtu: null,
     instance_recv_bps_limit: null,
     mapped_listeners: [],
@@ -247,6 +251,9 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
   const normalized: NetworkConfig = {
     ...config,
     peer_urls: cleanPeerUrls(config.peer_urls),
+    socks5_port: config.socks5_port ?? 1080,
+    socks5_username: config.socks5_username ?? '',
+    socks5_password: config.socks5_password ?? '',
   }
 
   const publicServerUrl = normalized.public_server_url?.trim() ?? ''

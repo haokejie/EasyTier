@@ -33,6 +33,8 @@ use std::{
 use strum::VariantArray;
 use tokio::io::AsyncReadExt;
 
+#[cfg(feature = "socks5")]
+use crate::launcher::build_socks5_portal_url;
 use crate::tunnel::IpScheme;
 #[cfg(feature = "jemalloc-prof")]
 use jemalloc_ctl::{Access as _, AsName as _, epoch, stats};
@@ -518,6 +520,22 @@ struct NetworkOptions {
         help = t!("core_clap.socks5").to_string()
     )]
     socks5: Option<u16>,
+
+    #[cfg(feature = "socks5")]
+    #[arg(
+        long,
+        env = "ET_SOCKS5_USERNAME",
+        help = t!("core_clap.socks5_username").to_string()
+    )]
+    socks5_username: Option<String>,
+
+    #[cfg(feature = "socks5")]
+    #[arg(
+        long,
+        env = "ET_SOCKS5_PASSWORD",
+        help = t!("core_clap.socks5_password").to_string()
+    )]
+    socks5_password: Option<String>,
 
     #[arg(
         long,
@@ -1010,11 +1028,11 @@ impl NetworkOptions {
 
         #[cfg(feature = "socks5")]
         if let Some(socks5_proxy) = self.socks5 {
-            cfg.set_socks5_portal(Some(
-                format!("socks5://0.0.0.0:{}", socks5_proxy)
-                    .parse()
-                    .unwrap(),
-            ));
+            cfg.set_socks5_portal(Some(build_socks5_portal_url(
+                socks5_proxy.into(),
+                self.socks5_username.as_deref(),
+                self.socks5_password.as_deref(),
+            )?));
         }
 
         for port_forward in self.port_forward.iter() {

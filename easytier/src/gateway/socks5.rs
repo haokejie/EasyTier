@@ -52,6 +52,26 @@ use crate::{
     peers::{PeerPacketFilter, peer_manager::PeerManager},
 };
 
+fn decode_url_part(value: &str) -> String {
+    percent_encoding::percent_decode_str(value)
+        .decode_utf8_lossy()
+        .into_owned()
+}
+
+fn socks5_auth_from_url(proxy_url: &url::Url) -> Option<SimpleUserPassword> {
+    let username = decode_url_part(proxy_url.username());
+    let password = proxy_url
+        .password()
+        .map(decode_url_part)
+        .unwrap_or_default();
+
+    if username.is_empty() && password.is_empty() {
+        None
+    } else {
+        Some(SimpleUserPassword { username, password })
+    }
+}
+
 enum SocksUdpSocket {
     UdpSocket(Arc<tokio::net::UdpSocket>),
     SmolUdpSocket(super::tokio_smoltcp::UdpSocket),
@@ -325,7 +345,6 @@ impl AsyncTcpConnector for Socks5AutoConnector {
 
 struct Socks5ServerNet {
     ipv4_addr: cidr::Ipv4Inet,
-    auth: Option<SimpleUserPassword>,
 
     smoltcp_net: Arc<Net>,
     forward_tasks: Arc<std::sync::Mutex<JoinSet<()>>>,
@@ -336,7 +355,6 @@ struct Socks5ServerNet {
 impl Socks5ServerNet {
     pub fn new(
         ipv4_addr: cidr::Ipv4Inet,
-        auth: Option<SimpleUserPassword>,
         peer_manager: Weak<PeerManager>,
         packet_recv: Arc<Mutex<mpsc::Receiver<ZCPacket>>>,
         entries: Socks5EntrySet,
@@ -408,7 +426,6 @@ impl Socks5ServerNet {
 
         Self {
             ipv4_addr,
-            auth,
 
             smoltcp_net: Arc::new(net),
             forward_tasks,
@@ -417,15 +434,35 @@ impl Socks5ServerNet {
         }
     }
 
-    async fn handle_tcp_stream_task(stream: tokio::net::TcpStream, connector: Socks5AutoConnector) {
-        let mut config = Config::<AcceptAuthentication>::default();
-        config.set_request_timeout(10);
-        config.set_skip_auth(false);
-        config.set_allow_no_auth(true);
+    async fn handle_tcp_stream_task(
+        stream: tokio::net::TcpStream,
+        connector: Socks5AutoConnector,
+        auth: Option<SimpleUserPassword>,
+    ) {
+        let ret = if let Some(auth) = auth {
+            let mut config = Config::<AcceptAuthentication>::default();
+            config.set_request_timeout(10);
+            config.set_skip_auth(false);
+            config.set_allow_no_auth(false);
+            let config = config.with_authentication(auth);
 
-        let socket = Socks5Socket::new(stream, Arc::new(config), connector);
+            Socks5Socket::new(stream, Arc::new(config), connector)
+                .upgrade_to_socks5()
+                .await
+                .map(|_| ())
+        } else {
+            let mut config = Config::<AcceptAuthentication>::default();
+            config.set_request_timeout(10);
+            config.set_skip_auth(false);
+            config.set_allow_no_auth(true);
 
-        match socket.upgrade_to_socks5().await {
+            Socks5Socket::new(stream, Arc::new(config), connector)
+                .upgrade_to_socks5()
+                .await
+                .map(|_| ())
+        };
+
+        match ret {
             Ok(_) => {
                 tracing::info!("socks5 handle success");
             }
@@ -435,11 +472,16 @@ impl Socks5ServerNet {
         };
     }
 
-    fn handle_tcp_stream(&self, stream: tokio::net::TcpStream, connector: Socks5AutoConnector) {
+    fn handle_tcp_stream(
+        &self,
+        stream: tokio::net::TcpStream,
+        connector: Socks5AutoConnector,
+        auth: Option<SimpleUserPassword>,
+    ) {
         self.forward_tasks
             .lock()
             .unwrap()
-            .spawn(Self::handle_tcp_stream_task(stream, connector));
+            .spawn(Self::handle_tcp_stream_task(stream, connector, auth));
     }
 }
 
@@ -461,7 +503,6 @@ struct UdpClientKey {
 pub struct Socks5Server {
     global_ctx: Arc<GlobalCtx>,
     peer_manager: Weak<PeerManager>,
-    auth: Option<SimpleUserPassword>,
 
     tasks: Arc<std::sync::Mutex<JoinSet<()>>>,
     packet_sender: mpsc::Sender<ZCPacket>,
@@ -566,16 +607,11 @@ impl PeerPacketFilter for Socks5Server {
 }
 
 impl Socks5Server {
-    pub fn new(
-        global_ctx: Arc<GlobalCtx>,
-        peer_manager: Arc<PeerManager>,
-        auth: Option<SimpleUserPassword>,
-    ) -> Arc<Self> {
+    pub fn new(global_ctx: Arc<GlobalCtx>, peer_manager: Arc<PeerManager>) -> Arc<Self> {
         let (packet_sender, packet_recv) = mpsc::channel(1024);
         Arc::new(Self {
             global_ctx,
             peer_manager: Arc::downgrade(&peer_manager),
-            auth,
 
             tasks: Arc::new(std::sync::Mutex::new(JoinSet::new())),
             packet_recv: Arc::new(Mutex::new(packet_recv)),
@@ -632,7 +668,6 @@ impl Socks5Server {
                     if let Some(cur_ipv4) = cur_ipv4 {
                         net.lock().await.replace(Socks5ServerNet::new(
                             cur_ipv4,
-                            None,
                             peer_manager.clone(),
                             packet_recv.clone(),
                             entries.clone(),
@@ -659,6 +694,7 @@ impl Socks5Server {
             *self.kcp_endpoint.lock().await = kcp_endpoint.clone();
         }
         if let Some(proxy_url) = self.global_ctx.config.get_socks5_portal() {
+            let auth = socks5_auth_from_url(&proxy_url);
             let bind_addr = format!(
                 "{}:{}",
                 proxy_url.host_str().unwrap(),
@@ -694,10 +730,12 @@ impl Socks5Server {
                                 entry_count: entry_count.clone(),
                             };
                             if let Some(net) = net.lock().await.as_ref() {
-                                net.handle_tcp_stream(socket, connector);
+                                net.handle_tcp_stream(socket, connector, auth.clone());
                             } else {
                                 tokio::spawn(Socks5ServerNet::handle_tcp_stream_task(
-                                    socket, connector,
+                                    socket,
+                                    connector,
+                                    auth.clone(),
                                 ));
                             }
                         }

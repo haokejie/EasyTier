@@ -193,6 +193,12 @@ core_clap:
   socks5:
     en: "enable socks5 server, allow socks5 client to access virtual network. format: <port>, e.g.: 1080"
     zh-CN: "启用 socks5 服务器，允许 socks5 客户端访问虚拟网络. 格式: <端口>，例如：1080"
+  socks5_username:
+    en: "username for the built-in socks5 server. username and password must be set together; leave both empty to allow no-auth socks5"
+    zh-CN: "内置 socks5 服务器用户名。用户名和密码必须同时填写；两者都留空则使用无认证 socks5"
+  socks5_password:
+    en: "password for the built-in socks5 server. username and password must be set together; leave both empty to allow no-auth socks5"
+    zh-CN: "内置 socks5 服务器密码。用户名和密码必须同时填写；两者都留空则使用无认证 socks5"
   ipv6_listener:
     en: "the url of the ipv6 listener, e.g.: tcp://[::]:11010, if not set, will listen on random udp port"
     zh-CN: "IPv6 监听器的URL，例如：tcp://[::]:11010，如果未设置，将在随机UDP端口上监听"

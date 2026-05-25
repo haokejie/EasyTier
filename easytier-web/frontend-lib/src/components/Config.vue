@@ -368,10 +368,20 @@ watch(() => curNetwork.value, syncNormalizedNetwork, { immediate: true, deep: fa
                   </div>
                   <ToggleButton v-model="curNetwork.enable_socks5" on-icon="pi pi-check" off-icon="pi pi-times"
                     :on-label="t('off_text')" :off-label="t('on_text')" class="w-48" />
-                  <div v-if="curNetwork.enable_socks5" class="items-center flex flex-row gap-x-4">
-                    <div class="min-w-64 w-full">
+                  <div v-if="curNetwork.enable_socks5" class="items-center flex flex-row gap-x-4 gap-y-3 flex-wrap">
+                    <div class="min-w-48 grow">
+                      <label for="socks5_port">{{ t('port') }}</label>
                       <InputNumber id="socks5_port" v-model="curNetwork.socks5_port" aria-describedby="rpc_port-help"
                         :format="false" :allow-empty="false" :min="0" :max="65535" class="w-full" />
+                    </div>
+                    <div class="min-w-48 grow">
+                      <label for="socks5_username">{{ t('socks5_username') }}</label>
+                      <InputText id="socks5_username" v-model="curNetwork.socks5_username" class="w-full" />
+                    </div>
+                    <div class="min-w-48 grow">
+                      <label for="socks5_password">{{ t('socks5_password') }}</label>
+                      <Password id="socks5_password" v-model="curNetwork.socks5_password" toggleMask :feedback="false"
+                        fluid />
                     </div>
                   </div>
                 </div>
